@@ -1,0 +1,42 @@
+{
+  "name": "members-only",
+  "version": "1.0.0",
+  "description": "aplciacion de publicacion de post en grupos privados implementando metodos de autenticacion",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node app.js",
+    "dev:server": "nodemon -e js,ejs app.js",
+    "dev:browser": "browser-sync start --proxy 'localhost:3000' --port 3001 --files 'views/**/*' 'public/**/*'",
+    "dev": "npm-run-all --parallel dev:server dev:browser"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/Luis200283/Members-Only/issues"
+  },
+  "homepage": "https://github.com/Luis200283/Members-Only#readme",
+  "devDependencies": {
+    "browser-sync": "^3.0.4",
+    "nodeom": "^0.0.1",
+    "npm-run-all": "^4.1.5"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-react": "^6.1.0",
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-session": "^1.19.0",
+    "express-validator": "^7.3.2",
+    "passport": "^0.7.0",
+    "passport-local": "^1.0.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.2",
+    "vite": "^8.2.2"
+  }
+}
