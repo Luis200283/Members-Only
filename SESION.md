@@ -63,14 +63,19 @@
       `start: NODE_ENV=production node app.js`. Eliminados browser-sync/nodeom/npm-run-all
       → `npm audit` = **0 vulnerabilidades**.
       **← SIGUIENTE PASO: 13 (verificación final dev+prod)**
-- [ ] **13. Verificación final** — flujo completo registro→login→postear→ver, en dev y prod.
+- [x] **13. Verificación final** — flujo completo verificado en **dev** y **prod**:
+      register→login→postear→feed (anónimo sin autor / logueado con autor), validaciones 400,
+      becomeAdmin (403/ok), logout→401, SPA + fallbacks (`/login`, `/admin`) 200, SSE push en vivo.
+      **✔ CHECKLIST COMPLETO**
 - [x] **Chat admin con SSE** — reemplazado el polling de 5s por Server-Sent Events (push real).
       Backend: `streamAdminMessages` + `broadcast` en adminController; frontend: `EventSource`
       en AdminChat (historial con GET + append en vivo, sin duplicados). Verificado con curl.
 
 ## Código del siguiente paso (Paso 13)
 Verificación final: flujo completo registro→login→postear→ver (feed anónimo/logueado) +
-becomeAdmin + chat SSE, en dev y prod.
+becomeAdmin + chat SSE, en dev y prod. **COMPLETADO — proyecto funcional de punta a punta.**
+Posibles mejoras futuras: store de sesiones persistente (`connect-pg-simple`), chat de admins
+con WebSocket (si se quiere bidireccional), deploy.
 
 ## Lecciones y errores típicos aprendidos
 - `vite.config.js` usa **`plugins`** (plural), no `plugin`.
