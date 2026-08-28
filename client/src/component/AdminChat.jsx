@@ -41,10 +41,10 @@ export default function AdminChat({ user }) {
   }
 
   return (
-    <main className="max-w-2xl mx-auto p-6">
+    <main className="max-w-300 mx-auto p-4">
       <h2 className="text-2xl font-bold mb-4">Chat privado de admins</h2>
       {error && <p className="text-red-400 text-sm">{error}</p>}
-      <ul className="bg-slate-900 rounded-2xl p-4 h-96 overflow-y-auto flex flex-col gap-2">
+      <ul className="bg-slate-900 rounded-2xl p-4 h-150 overflow-y-auto no-scrollbar flex flex-col gap-2">
         {messages.length === 0 ? (
           <p className="text-center text-slate-500 my-auto">
             Sin mensajes todavía.

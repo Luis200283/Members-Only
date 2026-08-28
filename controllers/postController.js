@@ -45,11 +45,16 @@ export async function createPost(req, res) {
   const { title, body } = req.body;
   try {
     const rows = await sql`
-             INSERT INTO posts (user_id, title, body)
-             VALUES (${req.user.id}, ${title}, ${body})
-             RETURNING id, title, body, created_at
-        `;
-    return res.status(201).json(rows[0]);
+      INSERT INTO posts (user_id, title, body)
+      VALUES (${req.user.id}, ${title}, ${body})
+      RETURNING id, title, body, created_at
+    `;
+    const post = {
+      ...rows[0],
+      user_id: req.user.id,
+      username: req.user.username,
+    };
+    return res.status(201).json(post);
   } catch (err) {
     return res.status(500).json({ error: "Error al crear el post" });
   }
@@ -84,10 +89,11 @@ export async function deletePost(req, res) {
         RETURNING id
     `;
     if (rows.length === 0)
-      return res.status(404).json({ error: "No tienes permiso o el post no existe" });
+      return res
+        .status(404)
+        .json({ error: "No tienes permiso o el post no existe" });
     return res.json({ ok: true });
   } catch (err) {
     return res.status(500).json({ error: "Error al eliminar el post" });
   }
 }
-
