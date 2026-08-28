@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "dev": "node app.js",
-    "build": "npm install cd client && vite build && cd ..",
+    "build": "npm install && cd client && vite build && cd ..",
     "start": "NODE_ENV=production node app.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
