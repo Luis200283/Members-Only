@@ -4,11 +4,10 @@
   "description": "aplciacion de publicacion de post en grupos privados implementando metodos de autenticacion",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node app.js",
-    "dev:server": "nodemon -e js,ejs app.js",
-    "dev:browser": "browser-sync start --proxy 'localhost:3000' --port 3001 --files 'views/**/*' 'public/**/*'",
-    "dev": "npm-run-all --parallel dev:server dev:browser"
+    "dev": "node app.js",
+    "build": "cd client && vite build && cd ..",
+    "start": "NODE_ENV=production node app.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
@@ -18,11 +17,6 @@
     "url": "https://github.com/Luis200283/Members-Only/issues"
   },
   "homepage": "https://github.com/Luis200283/Members-Only#readme",
-  "devDependencies": {
-    "browser-sync": "^3.0.4",
-    "nodeom": "^0.0.1",
-    "npm-run-all": "^4.1.5"
-  },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
     "@tailwindcss/vite": "^4.3.3",

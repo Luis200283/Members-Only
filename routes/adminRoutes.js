@@ -6,11 +6,13 @@ import {
   getAdminMessages,
   createAdminMessage,
   deleteUser,
+  streamAdminMessages,
 } from "../controllers/adminController.js";
 
 const router = Router();
 
 router.get("/messages", requireAdmin, getAdminMessages);
+router.get("/messages/stream", requireAdmin, streamAdminMessages);
 router.post(
   "/messages",
   requireAdmin,

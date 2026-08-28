@@ -51,16 +51,26 @@
       users + `becomeAdmin` con `ADMIN_SECRET`). Chat privado de admins (`admin_messages`).
       Verificado completo con curl. Corregidos 8 errores (ver Lecciones).
       **← SIGUIENTE PASO: 9 (App React)**
-- [ ] **9. App React** — componentes App, Login, Register, PostList, PostForm.
-- [ ] **10. react-router-dom** — BrowserRouter, Routes, Route, Link (proteger rutas por sesión).
-- [ ] **11. Comunicación fetch** — helpers en `client/src/api/` (cookies de sesión).
-- [ ] **12. Scripts npm** — actualizar `dev`/`start`/`build`; eliminar browser-sync/npm-run-all/nodeom
-      (fuente de las vulnerabilidades de `npm audit`).
+- [x] **9. App React** — componentes App, Login, Register, PostList, PostForm + router
+      (react-router-dom) + helpers fetch (`api/auth.js`, `api/posts.js`). Feed público anónimo /
+      logueado con autor, botón "Unirse al club" (becomeAdmin), borrado de posts propios/admin.
+      Corregidos 7 errores (imports `post.js`→`posts.js`, `setuser`, `useEffect` sin `[]`,
+      `userrname`, `e.taget`, `errors[0].msg`).
+- [x] **10. react-router-dom** — BrowserRouter, Routes, Route, Link; rutas protegidas con
+      `<Navigate>` (login/register si hay sesión; `/admin` solo admins).
+- [x] **11. Comunicación fetch** — helpers en `client/src/api/` (auth.js, posts.js, admin.js).
+- [x] **12. Scripts npm** — `dev: node app.js`, `build: cd client && vite build && cd ..`,
+      `start: NODE_ENV=production node app.js`. Eliminados browser-sync/nodeom/npm-run-all
+      → `npm audit` = **0 vulnerabilidades**.
+      **← SIGUIENTE PASO: 13 (verificación final dev+prod)**
 - [ ] **13. Verificación final** — flujo completo registro→login→postear→ver, en dev y prod.
+- [x] **Chat admin con SSE** — reemplazado el polling de 5s por Server-Sent Events (push real).
+      Backend: `streamAdminMessages` + `broadcast` en adminController; frontend: `EventSource`
+      en AdminChat (historial con GET + append en vivo, sin duplicados). Verificado con curl.
 
-## Código del siguiente paso (Paso 9)
-App React: componentes App, Login, Register, PostList, PostForm. Front consumirá la API
-`/api/*` documentada en el README (Pasos 6 y 7). Pendiente de documentar en README.
+## Código del siguiente paso (Paso 13)
+Verificación final: flujo completo registro→login→postear→ver (feed anónimo/logueado) +
+becomeAdmin + chat SSE, en dev y prod.
 
 ## Lecciones y errores típicos aprendidos
 - `vite.config.js` usa **`plugins`** (plural), no `plugin`.
@@ -89,14 +99,28 @@ App React: componentes App, Login, Register, PostList, PostForm. Front consumir�
 - Los errores de orquestación de pruebas no son bugs de la app: distinguir "sesión perdida por
   restart" de un fallo real del código.
 
+## Skill — Server-Sent Events (SSE)
+- **Qué es**: HTTP que queda abierto; el servidor empuja eventos `data: <json>\n\n` (línea en blanco).
+- **Cuándo usar**: chat/notificaciones (unidireccional servidor→cliente). Evita el polling (peticiones
+  inútiles). WebSocket solo si se necesita bidireccionalidad (juegos, colab).
+- **Backend**: `res.writeHead(200, {"Content-Type":"text/event-stream", ...})` + `res.flushHeaders()`
+  (envía headers sin esperar primer write) → mantener `res` en un `Set` de clientes → `broadcast`
+  escribe en cada uno → limpiar con `res.on("close")`. Heartbeat `: ping\n\n` cada 30s para proxies.
+- **Frontend**: `new EventSource(url)`; `source.onmessage`; `source.close()` al desmontar.
+  `EventSource` **se reconecta solo** y manda la cookie de sesión (same-origin → funciona `requireAdmin`).
+- **Gotcha**: el broadcast vive en memoria (se pierde al reiniciar) → el cliente recarga historial al
+  reconectarse. Append idempotente `prev.some(m => m.id === msg.id)` para evitar duplicados.
+- **Probar**: `curl -N <url>` se queda "colgado" y muestra cada evento al instante.
+
 ## Archivos clave del proyecto
 - `app.js` — servidor Express + middleware de Vite (dev/prod). *(completo, Paso 6 terminado)*
-- `client/` — React: `index.html`, `vite.config.js`, `src/main.jsx`, `src/App.jsx`, `src/index.css`.
+- `client/` — React: `index.html`, `vite.config.js`, `src/main.jsx`, `src/App.jsx`, `src/index.css`,
+  `src/api/` (auth, posts, admin), `src/component/` (Login, Register, PostList, PostForm, AdminChat).
 - `db/neon.js` — cliente de Neon. `db/test.js` — prueba de conexión.
 - `config/passport.js` — estrategia local + serialize/deserialize (con `"isAdmin"`).
-  `controllers/` (auth, post, admin), `middleware/` (auth, validate), `routes/` (auth, post, admin)
-  — **Paso 8 cerrado, todo verificado con curl**.
-- `README.md` — guía de configuración. Pasos 1-7 documentados (5 fusiona dev+prod) + Anexo de
+  `controllers/` (auth, post, admin — con SSE), `middleware/` (auth, validate), `routes/` (auth, post, admin)
+  — **Pasos 1-12 cerrados, verificado con curl y build.**
+- `README.md` — guía de configuración. Pasos 1-8 documentados (5 fusiona dev+prod; 8 = SSE) + Anexo de
   diagramas de sesión. **Paso 8 (App React) pendiente de documentar.**
 
 ## ⚠️ IMPORTANTE al cambiar de PC

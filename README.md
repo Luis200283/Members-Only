@@ -16,7 +16,8 @@ App de posts en grupos privados.
 5. [Express + Vite (servidor único, dev y prod)](#paso-5--express--vite-servidor-único-dev-y-prod)
 6. [Autenticación con Passport (sesiones)](#paso-6--autenticación-con-passport-sesiones)
 7. [Posts API + roles (admin)](#paso-7--posts-api--roles-admin)
-8. [Anexo: flujo de sesión con Passport](#anexo--cómo-funciona-el-flujo-de-sesión-con-passport)
+8. [SSE en el chat de admins](#paso-8--sse-en-el-chat-de-admins)
+9. [Anexo: flujo de sesión con Passport](#anexo--cómo-funciona-el-flujo-de-sesión-con-passport)
 
 ## Paso 1 — Instalación de dependencias
 
@@ -246,7 +247,10 @@ Members-Only/
 ├── client/       → app React + Vite + Tailwind
 │   ├── index.html
 │   ├── vite.config.js
-│   └── src/ (main.jsx, App.jsx, index.css)
+│   └── src/
+│       ├── main.jsx, App.jsx, index.css
+│       ├── api/       → auth.js, posts.js (fetch helpers)
+│       └── component/ → Login, Register, PostList, PostForm
 ├── config/       → passport.js
 ├── controllers/  → authController, postController, adminController
 ├── middleware/   → auth.js (requireAuth/requireAdmin), validate.js
@@ -632,6 +636,94 @@ node db/schema.js   # admin_messages, posts, users
 # chat /api/admin/messages: user → 403 · admin → 200
 # DELETE /api/admin/users/:id → borra usuario y sus posts (cascade)
 ```
+
+---
+
+## Paso 8 — SSE en el chat de admins
+
+**Server-Sent Events** permite que el servidor **empuje** datos al navegador por una única
+conexión HTTP que queda abierta. Ideal para chat/notificaciones (unidireccional servidor→cliente).
+
+```
+Cliente                        Servidor
+   │  EventSource("/api/admin/messages/stream")   ← abre conexión
+   │───────────────────────────────────────────►  (queda abierta)
+   │                                              res.writeHead(200, "text/event-stream")
+   │  data: {"id":3,"body":"hola","username":"luis"}\n\n   ← push cuando hay mensaje
+   │◄────────────────────────────────────────────
+   │  onmessage → agrega el mensaje al estado     (sin polling)
+```
+
+### Backend — `controllers/adminController.js`
+
+```js
+const sseClients = new Set();   // clientes conectados (en memoria)
+
+export async function streamAdminMessages(req, res) {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+  });
+  res.flushHeaders();
+
+  const heartbeat = setInterval(() => res.write(": ping\n\n"), 30000); // latido
+  sseClients.add(res);
+  res.on("close", () => {
+    clearInterval(heartbeat);
+    sseClients.delete(res);
+  });
+}
+
+function broadcast(message) {
+  const payload = `data: ${JSON.stringify(message)}\n\n`;
+  for (const client of sseClients) client.write(payload);
+}
+
+// en createAdminMessage, tras el INSERT:
+const msg = { ...rows[0], username: req.user.username };
+broadcast(msg);
+```
+
+```js
+// routes/adminRoutes.js
+router.get("/messages/stream", requireAdmin, streamAdminMessages);
+```
+
+### Frontend — `client/src/api/admin.js` y `AdminChat.jsx`
+
+```js
+export function streamAdminMessages(onMessage) {
+  const source = new EventSource("/api/admin/messages/stream");
+  source.onmessage = (event) => onMessage(JSON.parse(event.data));
+  return source;
+}
+```
+
+```jsx
+useEffect(() => {
+  load();                                      // historial inicial (GET normal)
+  const source = streamAdminMessages((msg) => {
+    setMessages((prev) =>
+      prev.some((m) => m.id === msg.id) ? prev : [...prev, msg], // sin duplicados
+    );
+  });
+  return () => source.close();                 // limpiar al desmontar
+}, []);
+```
+
+### Claves de SSE
+
+- Formato de cada evento: `data: <json>\n\n` (termina en **línea en blanco**).
+- `res.flushHeaders()` envía los headers de inmediato (sin esperar el primer write).
+- **Heartbeat** (`: ping\n\n`): comentario que mantiene viva la conexión frente a proxies.
+- `EventSource` **se reconecta solo** al caerse; la cookie de sesión viaja (same-origin), así que
+  `requireAdmin` funciona en el stream.
+- El broadcast es en memoria: si el servidor se reinicia, al reconectarse se recarga el historial
+  de la DB → sin pérdida de mensajes.
+- Probar con curl: `curl -N http://localhost:3000/api/admin/messages/stream` (queda "colgado").
+- Comparativa: **polling** (pregunta cada N s → peticiones inútiles) · **SSE** (push una vía,
+  ideal chat/notificaciones) · **WebSocket** (bidireccional, más complejo, para juegos/colab).
 
 ---
 
