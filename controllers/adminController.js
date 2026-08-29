@@ -1,23 +1,25 @@
 import sql from "../db/neon.js";
 
-const sseClients = new Set();
+const sseClients = new Set(); //set de sesiones activas
 
 //Crear transmicion de datos abiertta SSE(Server-Sent Event)
 
 export async function streamAdminMessages(req, res) {
   res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
+    //definir el tipo datos que enviaremos
+    "Content-Type": "text/event-stream", //es un Stream de eventos
+    "Cache-Control": "no-cache", //no guarda las respuestas en el navegador
+    Connection: "keep-alive", //y mantine una linea de comunicacion activa
   });
-  res.flushHeaders();
+  res.flushHeaders(); //empuja el header para no esperar eventos
 
-  const heartbeat = setInterval(() => res.write(": ping\n\n"), 30000);
+  const heartbeat = setInterval(() => res.write(": ping\n\n"), 30000); //latidos para que los balanceadores de proxis no maten la conexion por inactividad
 
   sseClients.add(res); //agregar un cliente cada vez que alguien se conecte
   res.on("close", () => {
-    clearInterval(heartbeat);
-    sseClients.delete(res);
+    // al cerrar la conexion dispara este evento
+    clearInterval(heartbeat); //detiene los latidos
+    sseClients.delete(res); //y lo elimina del Set() para no enviar datos a una sesion cerrada
   });
 }
 
@@ -25,7 +27,7 @@ export async function streamAdminMessages(req, res) {
 
 function broadcast(message) {
   const payload = `data: ${JSON.stringify(message)}\n\n`;
-  for (const client of sseClients) client.write(payload);
+  for (const client of sseClients) client.write(payload);   
 }
 
 // obtener los mensages de la BD
@@ -58,7 +60,7 @@ export async function createAdminMessage(req, res) {
       RETURNING id, body, created_at
     `;
     const msg = { ...rows[0], username: req.user.username };
-    broadcast(msg);  //sincronizar el chat para todos 
+    broadcast(msg); //sincronizar el chat para todos
     return res.status(201).json(rows[0]);
   } catch (err) {
     return res

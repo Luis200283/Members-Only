@@ -17,7 +17,7 @@ export async function createAdminMessage(body) {
 }
 
 export function streamAdminMessages(onMessage) {
-  const source = new EventSource("/api/admin/messages/stream");
-  source.onmessage = (event) => onMessage(JSON.parse(event.data));
+  const source = new EventSource("/api/admin/messages/stream");   //recibe los res() de esta ruta
+  source.onmessage = (event) => onMessage(JSON.parse(event.data)); //envia los mensajes al useEfect() (setMessage())
   return source;
 }

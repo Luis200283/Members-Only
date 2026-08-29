@@ -1,5 +1,9 @@
 import { useEffect, useState, useRef } from "react";
-import { fetchAdminMessages, createAdminMessage, streamAdminMessages } from "../api/admin.js";
+import {
+  fetchAdminMessages,
+  createAdminMessage,
+  streamAdminMessages,
+} from "../api/admin.js";
 
 export default function AdminChat({ user }) {
   const [messages, setMessages] = useState([]);
@@ -16,10 +20,11 @@ export default function AdminChat({ user }) {
   }
 
   useEffect(() => {
-    load();
+    load(); // traer todos los mensajes anteriores
     const source = streamAdminMessages((msg) => {
-      setMessages((prev) =>
-        prev.some((m) => m.id === msg.id) ? prev : [...prev, msg],
+      //llama al EventSource() que abrira la sesion y seguira enviando mensajes aunque useEffect() ya no se ejecute
+      setMessages((prev) =>  //actualizara el mensaje siempre es un closure
+        prev.some((m) => m.id === msg.id) ? prev : [...prev, msg],  //append indeponente
       );
     });
     return () => source.close();

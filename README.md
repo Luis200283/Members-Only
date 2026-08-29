@@ -690,6 +690,80 @@ broadcast(msg);
 router.get("/messages/stream", requireAdmin, streamAdminMessages);
 ```
 
+#### Flujo de `streamAdminMessages` (paso a paso)
+
+```
+Petición: GET /api/admin/messages/stream  (ya pasó requireAdmin → req.user existe)
+   │
+   ▼
+┌─ PASO 1: res.writeHead(200, {...}) ────────────────────────────────────┐
+│  "Elijo qué tipo de respuesta seré" — solo guarda los headers en el    │
+│  buffer, NO los envía todavía.                                         │
+│  · Content-Type: text/event-stream → le dice al navegador: "esto es    │
+│    un SSE; espérame y te empujaré eventos" (sin esto, EventSource no   │
+│    funciona).                                                          │
+│  · Cache-Control: no-cache → para que ni proxies ni el navegador       │
+│    guarden esta respuesta (un stream NO se puede cachear).             │
+│  · Connection: keep-alive → "no cierres el cable, seguiré enviando".   │
+└────────────────────────────────────────────────────────────────────────┘
+   │
+   ▼
+┌─ PASO 2: res.flushHeaders() ───────────────────────────────────────────┐
+│  "Despego ahora": saca los headers del buffer y los manda al navegador │
+│  SIN esperar al primer evento. Si no lo hicieras, los headers          │
+│  viajarían junto al primer write() — que puede tardar minutos → el     │
+│  navegador no sabría que es un SSE y onopen no se dispararía.          │
+└────────────────────────────────────────────────────────────────────────┘
+   │  El navegador recibe Content-Type → EventSource dispara "onopen"
+   ▼
+┌─ PASO 3: heartbeat = setInterval(write(": ping\n\n"), 30000) ──────────┐
+│  "Un vigilante que cada 30 s manda un comentario vacío".               │
+│  · ": ping\n\n" es un COMENTARIO del protocolo SSE (empieza con ":")   │
+│    — el navegador lo ignora.                                           │
+│  · Por qué: proxies/balanceadores (o Render) matan conexiones que      │
+│    están "inactivas". El ping las mantiene "vivas" ante esas capas.    │
+└────────────────────────────────────────────────────────────────────────┘
+   │
+   ▼
+┌─ PASO 4: sseClients.add(res) ──────────────────────────────────────────┐
+│  "Registro este cliente en la lista de conexiones vivas".              │
+│  sseClients es un Set() de objetos `res` (uno por admin conectado).    │
+│  Cuando alguien hace POST, broadcast() recorre este Set y escribe      │
+│  "data: {...}" en cada `res` → así TODOS reciben el mensaje.           │
+└────────────────────────────────────────────────────────────────────────┘
+   │
+   ▼
+┌─ PASO 5: res.on("close", limpiar) ─────────────────────────────────────┐
+│  "Cuando el navegador cierre (recarga, cierra pestaña, cae la red):"   │
+│  · clearInterval(heartbeat) → deja de mandar pings a un muerto.        │
+│  · sseClients.delete(res) → lo saca del Set para que broadcast no      │
+│    intente escribirle a una conexión cerrada (evita errores y fugas).  │
+└────────────────────────────────────────────────────────────────────────┘
+   │
+   ▼
+La función RETORNA — pero la conexión queda "colgada": el socket sigue
+abierto y cada broadcast futuro escribirá sobre `res`.
+```
+
+#### Glosario de términos
+
+- **"Colgada" / "conexión colgada"** — La petición HTTP **nunca se cierra** (no se
+  llama `res.end()`). El navegador abre el cable y lo deja a la espera de más datos. Es
+  la esencia de SSE.
+- **Buffer** — Zona de memoria donde Node acumula datos antes de enviarlos. Node
+  bufferiza la respuesta: headers + primer trozo de body salen **juntos** en el primer
+  `write()`. Por eso `writeHead()` por sí solo no manda nada; `flushHeaders()` vacía el
+  buffer enviando solo los headers.
+- **Heartbeat (latido)** — Mensaje periódico que mantiene viva la conexión. En SSE se
+  usa un comentario (`: ping\n\n`), que el protocolo define para ignorarse en el
+  cliente. Evita que proxies/balanceadores corten conexiones que crean inactivas.
+- **`new Set()`** — Colección de JS que guarda **valores únicos** (sin duplicados).
+  Operaciones en O(1): `add`/`delete`, e iterable con `for...of` (lo que usa `broadcast`).
+  Aquí guarda objetos `res`, uno por admin conectado → "la lista de clientes vivos".
+- **`res`** — El objeto de respuesta HTTP de esa petición. Cada conexión SSE tiene **su
+  propio `res`**: escribir en él manda datos a **ese** navegador. Guardarlos en el `Set`
+  permite recordar todos los clientes para escribirles cuando haya un mensaje nuevo.
+
 ### Frontend — `client/src/api/admin.js` y `AdminChat.jsx`
 
 ```js
@@ -711,6 +785,169 @@ useEffect(() => {
   return () => source.close();                 // limpiar al desmontar
 }, []);
 ```
+
+#### Ciclo de vida del `useEffect` (con `[]`)
+
+```
+PRIMER RENDER del componente AdminChat
+   │
+   ▼
+useEffect con [] → se ejecuta UNA vez, después del render
+   │
+   ├─ (1) load()
+   │        fetch GET /api/admin/messages   → historial   → setMessages(historial)
+   │
+   ├─ (2) streamAdminMessages(callback)
+   │        crea EventSource("/api/admin/messages/stream")
+   │        source.onmessage = callback        ← registrar el "escuchador"
+   │        devuelve `source` (guardado en la variable local)
+   │
+   ├─ (3) return () => source.close()
+   │        NO se ejecuta ahora: es la función de LIMPIEZA,
+   │        React la guarda para usarla después.
+   │
+   ▼
+   El componente sigue vivo. Cada vez que llega un evento SSE:
+      source.onmessage(callback)  ← se ejecuta el MISMO callback (closure)
+   │       └─ setMessages(prev => ...)   → re-render con el mensaje nuevo
+   │
+   (esto pasa miles de veces, pero el useEffect NO se re-ejecuta,
+    porque la conexión ya quedó abierta una vez)
+   │
+   ▼
+El usuario sale del chat / navega a otra ruta
+   ▼
+React DESMONTA el componente → ejecuta la limpieza:
+   return () => source.close();   ← cierra el EventSource (corta la conexión)
+```
+
+> Con `[]`, la función corre **una sola vez** tras el primer render. Si pusieras `[messages]`,
+> se re-ejecutaría en cada cambio → abrirías un `EventSource` nuevo por mensaje (conexiones
+> duplicadas/fugas). El cleanup cierra la conexión al desmontar para no dejar streams colgados.
+
+#### `setMessages(prev => ...)` — actualización funcional y append idempotente
+
+```
+¿Por qué `prev` siempre ve el estado más reciente?
+
+useState acepta un valor directo o una función. Con función (updater),
+React la ejecuta AL PROCESAR la actualización y le pasa `prev` = el estado
+en ese momento (no el que capturó tu closure).
+
+SIN función (bug de stale state): si dos eventos SSE llegan antes de un
+re-render, ambos usan el MISMO `messages` viejo → el primero se pierde.
+   evento A → setMessages([...messages, A])  → usa messages=[] → [A]
+   evento B → setMessages([...messages, B])  → sigue viendo [] → [B]  ❌ A se perdió
+
+CON función (recomendado): React encadena los updates; cada `prev` es el
+resultado del anterior.
+   evento A → setMessages(prev => [...prev, A]) → prev=[] → [A]
+   evento B → setMessages(prev => [...prev, B]) → prev=[A] → [A, B]  ✓
+```
+
+```js
+prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]
+```
+
+- `prev` = estado actual de `messages` (un array de mensajes).
+- `.some(fn)` → `true` si **al menos un elemento** cumple la condición; se detiene en el
+  primero. Aquí pregunta: **"¿ya existe un mensaje con este `id`?"**.
+- Si **SÍ** → devuelve `prev` tal cual (misma referencia → React **no re-renderiza**, y no
+  se duplica el mensaje).
+- Si **NO** → devuelve `[...prev, msg]`: copia todo lo anterior y agrega `msg` al final
+  (array nuevo → React re-renderiza).
+
+**Idempotente** = aplicar el mismo evento 2 veces no duplica: la 2ª vez `.some` da `true`.
+Útil para la carrera entre el historial (`load()`) y un evento SSE que llegue justo después.
+
+#### Flujo completo de SSE
+
+**A) Abrir la conexión (sucede 1 vez):**
+
+```
+NAVEGADOR (AdminChat)
+   │  new EventSource("/api/admin/messages/stream")
+   │  (GET con la cookie de sesión, same-origin)
+   ▼
+app.js ──► express-session + passport.session()      → req.user (es admin)
+   ▼
+app.js ──► app.use("/api/admin", adminRoutes)
+   ▼
+routes/adminRoutes.js ──► router.get("/messages/stream", requireAdmin, streamAdminMessages)
+   ▼
+middleware requireAdmin ──► !req.user → 401 · !req.user.isAdmin → 403
+   ▼
+adminController.streamAdminMessages(req, res)   (headers SSE + flushHeaders + heartbeat + add al Set)
+   ▼
+   ╔══════════════════════════════════════════════════════╗
+   ║  CONEXIÓN ABIERTA — el servidor ya NO responde:       ║
+   ║  se queda "colgado" esperando para empujar eventos.   ║
+   ╚══════════════════════════════════════════════════════╝
+```
+
+**B) Empujar un mensaje nuevo (cada mensaje):**
+
+```
+Cualquier admin (p. ej. otro AdminChat abierto)
+   │  POST /api/admin/messages   {body: "hola"}
+   ▼
+routes/adminRoutes.js ──► router.post("/messages", requireAdmin, handleValidation, createAdminMessage)
+   ▼
+adminController.createAdminMessage
+   ├─ INSERT INTO admin_messages (user_id, body) VALUES (...) RETURNING ...   →  NEON
+   ├─ msg = { ...rows[0], username: req.user.username }    ← se añade el autor
+   ├─ broadcast(msg)      ← recorre el Set sseClients
+   │     for (const client of sseClients) client.write(`data: ${JSON.stringify(msg)}\n\n`)
+   │           ├─► cliente A (conexión abierta)  → recibe "data: {...}\n\n"
+   │           └─► cliente B (el remitente)      → también recibe su propio mensaje
+   └─ res.status(201).json(rows[0])    ← responde el POST normal (no bloquea)
+   ▼
+NAVEGADOR A (AdminChat)
+   │  EventSource.onmessage = (event) => ...   → event.data = "{...}"
+   │  setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg])
+   ▼
+   React re-renderiza → el mensaje aparece al instante en TODOS los admins conectados
+```
+
+**C) Formato del evento (lo que viaja por la conexión):**
+
+```
+data: {"id":3,"body":"hola","username":"luis"}\n
+\n
+: ping\n\n          ← comentario (heartbeat); EventSource lo ignora
+```
+
+- Cada evento real: `data: <json>` + **línea en blanco** (eso delimita el evento).
+- `: ping\n\n` es un **comentario** que se envía cada 30 s para que proxies/balanceadores no
+  maten la conexión inactiva. El navegador lo descarta.
+
+**D) Ciclo de vida y reconexión:**
+
+```
+Servidor se reinicia o cae
+   ▼
+Conexión SSE se cierra  (también se borran los sseClients de memoria)
+   ▼
+EventSource se RECONECTA SOLO (es automático; manda la cookie → requireAdmin vuelve a pasar)
+   ▼
+AdminChat vuelve a cargar:
+   1. GET /api/admin/messages   → historial completo desde la DB (no se pierde nada)
+   2. stream SSE abierto de nuevo → sigue recibiendo push
+```
+
+> El broadcast vive en memoria (se pierde al reiniciar), pero **el historial está en la DB**:
+> al reconectar se recarga. Por eso no se pierden mensajes.
+
+**Resumen del flujo:**
+
+| Paso | Quién | Qué hace |
+|---|---|---|
+| 1 | Cliente | `new EventSource(url)` abre la conexión |
+| 2 | Servidor | Valida sesión (`requireAdmin`) y deja la conexión abierta |
+| 3 | Cliente | Carga historial con `GET /api/admin/messages` |
+| 4 | Cualquier admin | `POST /api/admin/messages` guarda en la DB |
+| 5 | Servidor | `broadcast(msg)` escribe `data: {...}` en todos los `sseClients` |
+| 6 | Todos los clientes | `onmessage` agrega el mensaje → UI actualizada al instante |
 
 ### Claves de SSE
 
