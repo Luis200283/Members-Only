@@ -21,19 +21,19 @@ export default function Login({ onLogin }) {
   }
 
   return (
-    <div className="flex items-center justify-center mt-24">
+    <div className="flex items-center justify-center mt-24 px-4">
       <form
         onSubmit={handleSubmit}
-        className="bg-slate-900 p-8 rounded-2xl w-96 flex flex-col gap-4"
+        className="bg-surface border border-line rounded-card p-8 w-96 max-w-full flex flex-col gap-4"
       >
-        <h2 className="text-2xl font-bold text-center">Iniciar sesión</h2>
-        {error && <p className="text-red-400 text-sm">{error}</p>}
+        <h2 className="font-display text-3xl text-center text-ink">Iniciar sesión</h2>
+        {error && <p className="text-danger text-sm">{error}</p>}
         <input
           name="username"
           placeholder="Usuario"
           value={form.username}
           onChange={handleChange}
-          className="bg-slate-800 p-3 rounded-lg"
+          className="bg-raised border border-line rounded-card p-3 min-h-10 text-ink placeholder:text-muted focus:outline-2 focus:outline-accent"
         />
         <input
           name="password"
@@ -41,12 +41,12 @@ export default function Login({ onLogin }) {
           placeholder="Contraseña"
           value={form.password}
           onChange={handleChange}
-          className="bg-slate-800 p-3 rounded-lg"
+          className="bg-raised border border-line rounded-card p-3 min-h-10 text-ink placeholder:text-muted focus:outline-2 focus:outline-accent"
         />
-        <button className="bg-blue-500 p-3 rounded-lg font-bold">Entrar</button>
-        <p className="text-sm text-center text-slate-400">
+        <button className="bg-accent text-accent-ink rounded-card p-3 min-h-10 font-medium">Entrar</button>
+        <p className="text-sm text-center text-muted">
           ¿No tienes cuenta?{" "}
-          <Link to="/register" className="text-emerald-400">
+          <Link to="/register" className="text-accent underline underline-offset-2">
             Regístrate
           </Link>
         </p>

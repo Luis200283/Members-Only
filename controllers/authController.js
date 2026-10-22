@@ -1,6 +1,28 @@
 import bcrypt from "bcryptjs";
 import passport from "../config/passport.js";
 import sql from "../db/neon.js";
+import pool from "../db/pg.js";
+import { closeStreamsForSession } from "./chatController.js";
+
+async function joinGeneralRoom(userId) {
+  try {
+    await pool.query(
+      `
+        INSERT INTO conversation_members (conversation_id, user_id, role, last_read_message_id)
+        SELECT c.id, $1, 'member',
+               COALESCE((SELECT max(m.id) FROM messages m WHERE m.conversation_id = c.id), 0)
+        FROM conversations c
+        WHERE c.type = 'group' AND c.is_public = true AND c.title = 'general'
+        ORDER BY c.id ASC
+        LIMIT 1
+        ON CONFLICT DO NOTHING
+      `,
+      [userId],
+    );
+  } catch (err) {
+    console.error("No se pudo unir a general:", err.message);
+  }
+}
 
 export async function register(req, res) {
   const { username, password } = req.body;
@@ -11,6 +33,7 @@ export async function register(req, res) {
       VALUES (${username}, ${hash})
       RETURNING id, username, "isAdmin", created_at
     `;
+    await joinGeneralRoom(rows[0].id);
     req.login(rows[0], (err) => {
       if (err)
         return res.status(500).json({ error: "Error al iniciar sesión" });
@@ -36,6 +59,7 @@ export function login(req, res, next) {
 }
 
 export function logout(req, res) {
+  closeStreamsForSession(req.sessionID);
   req.logout((err) => {
     if (err) return res.status(500).json({ error: "Error al cerrar sesión" });
     return res.json({ ok: true });

@@ -4,6 +4,7 @@
 > Complementa a `README.md` (guía de configuración técnica). Aquí está el estado del trabajo y las decisiones.
 
 - Fecha de inicio: 27 ago 2026
+- Última actualización: 20 oct 2026 (fase `refactor/chat-v1`)
 - Proyecto: Members-Only — app de posts en grupos privados con autenticación.
 - Objetivo de la sesión: migrar de **EJS** a **React**, manteniendo el backend **Node + Express** controlado a mano.
 
@@ -77,6 +78,74 @@ becomeAdmin + chat SSE, en dev y prod. **COMPLETADO — proyecto funcional de pu
 Posibles mejoras futuras: store de sesiones persistente (`connect-pg-simple`), chat de admins
 con WebSocket (si se quiere bidireccional), deploy.
 
+---
+
+## Fase actual — `refactor/chat-v1` (en curso, sin commit)
+
+Objetivo: endurecer el backend y añadir **chat privado 1:1 y en grupo** (sustituye al chat
+solo de admins para el uso general; el chat de admins antiguo sigue existiendo en `/admin`).
+
+### Completado en esta fase (working tree)
+- [x] **Separación app/servidor** — `app.js` exporta la app (testeable, sin `listen`);
+      `server.js` hace `listen` + cierre ordenado con SIGTERM/SIGINT.
+- [x] **Config validada** — `config/env.js` exige `DATABASE_URL` y `SESSION_SECRET`, centraliza
+      `PORT`, `isProd`, `isTest`; ya no se lee `process.env` disperso.
+- [x] **Sesiones persistentes** — `connect-pg-simple` sobre `db/pg.js` en dev/prod
+      (MemoryStore solo en `NODE_ENV=test`). Cookie `members.sid` httpOnly, sameSite=lax,
+      secure en prod, 7 días. `trust proxy` en prod.
+- [x] **Hardening** — `helmet`, `express-rate-limit` (`authLimiter`, `chatWriteLimiter`),
+      `sameOrigin` para métodos unsafe, `notFound`/`errorHandler` centralizados,
+      `GET /api/health`.
+- [x] **Migraciones** — `db/migrate.js` + `db/migrations/001_chat.sql` (tabla
+      `schema_migrations`, transacciones). Script `npm run db:migrate` (ya aplicada en Neon).
+- [x] **Esquema de chat** — `conversations`, `conversation_members`, `messages`
+      (DM por `dm_key` único, grupos, roles owner/member, `last_read_message_id`, borrado lógico).
+- [x] **Backend de chat** — `controllers/chatController.js` + `routes/chatRoutes.js`,
+      montado en `/api/chat`. Endpoints:
+      - `GET /users?q=` (mín. 2 caracteres, sin wildcards)
+      - `GET /conversations` (título de DM calculado, último mensaje, `unread_count`)
+      - `GET /conversations/:id`
+      - `POST /conversations` (`{type:"direct",targetUserId}` reutiliza DM; grupo con
+        `{type:"group",title,memberIds}`)
+      - `GET /conversations/:id/messages?limit=&before=` (paginación por cursor `id`)
+      - `POST /conversations/:id/messages` (`{body}`, máx. 4000)
+      - `POST /conversations/:id/read` (`{messageId}`)
+      - `GET /stream` (SSE con eventos `ready`, `message.created`, `conversation.created`,
+        `read.updated`; heartbeat 30 s; `read.updated` solo al mismo usuario).
+- [x] **Frontend de chat** — `client/src/component/chat/*` (ChatPage, ConversationList,
+      ChatWindow, MessageComposer, NewConversationModal), `hooks/useChatStream.js`,
+      `api/chat.js`; rutas `/chat` y `/chat/:conversationId`; layout con scroll independiente.
+- [x] **Tests** — `test/chat.test.js` (Vitest + Supertest) cubre registro, búsqueda, DM único,
+      envío, no leídos, historial, marcar leído, grupo, validaciones y SSE. `npm test` en verde
+      (8/8). `vitest.config.js` con timeout 30 s y sin paralelismo entre archivos.
+- [x] **Verificación** — `npm run build` OK; `npm test` OK; smoke dev: `/api/health` 200 y
+      `/chat` 200.
+
+### Pendiente para cerrar la fase
+- [ ] Probar el flujo de chat en el navegador (login, DM, grupo, dos pestañas/SSE, no leídos).
+- [x] Documentar en `README.md`: inicio rápido, scripts (`server.js`), store de sesiones,
+      migraciones, objetivos de chat, endpoints, SSE con eventos nombrados, frontend, tests,
+      hardening, gotchas y Anexo de sesión actualizado. (Paso 9 añadido.)
+- [ ] Probar `npm start` en producción real (HTTPS) por el flag `secure` de la cookie.
+- [ ] Decidir si el chat de admins (`admin_messages` + `/admin`) se conserva o se migra a
+      `conversations`; por ahora conviven.
+- [ ] Revisar `secure: env.isProd`: en prod local por HTTP la cookie no se guarda; para
+      probar `npm start` en localhost haría falta HTTPS o un flag explícito.
+- [ ] Commit de la fase `refactor/chat-v1`.
+
+### Gotchas nuevos aprendidos
+- `pg` devuelve `BIGINT`/`BIGSERIAL` como **string**; se añadió
+  `pg.types.setTypeParser(20, Number)` en `db/pg.js`. Sin eso, comparar ids de mensajes
+  (`"10" < "9"`) da resultados incorrectos en el front.
+- `@neondatabase/serverless` (tagged templates) no sirve para transacciones multi-query;
+  el chat usa el `Pool` de `pg` (`db/pg.js`) para crear conversación + miembros de forma atómica.
+- Los eventos SSE con nombre (`event: ready`) **no** llegan a `source.onmessage`; hay que
+  usar `source.addEventListener("ready", ...)` (el hook ya lo hace).
+- En tests, `NODE_ENV=test` activa MemoryStore y desactiva los rate limiters; las pruebas siguen
+  usando la DB real de Neon, con usuarios aleatorios y limpieza en `afterAll`.
+- El servidor de desarrollo que quedó corriendo de la sesión anterior no recarga el backend:
+  hay que reiniciar `node server.js` para ver los endpoints de chat.
+
 ## Lecciones y errores típicos aprendidos
 - `vite.config.js` usa **`plugins`** (plural), no `plugin`.
 - El **CSS se importa desde JS** (`import "./index.css"`); el `<link>` en HTML no es el patrón recomendado.
@@ -118,18 +187,42 @@ con WebSocket (si se quiere bidireccional), deploy.
 - **Probar**: `curl -N <url>` se queda "colgado" y muestra cada evento al instante.
 
 ## Archivos clave del proyecto
-- `app.js` — servidor Express + middleware de Vite (dev/prod). *(completo, Paso 6 terminado)*
+- `app.js` — app Express + middleware de Vite (dev/prod), sesión, seguridad y montaje de rutas.
+  `server.js` — `listen` + cierre ordenado.
+- `config/env.js` — variables de entorno validadas. `config/passport.js` — estrategia local.
+- `db/pg.js` — `Pool` de `pg` (sesiones + chat). `db/neon.js` — cliente Neon (posts/auth/admin).
+  `db/migrate.js` + `db/migrations/` — migraciones SQL.
 - `client/` — React: `index.html`, `vite.config.js`, `src/main.jsx`, `src/App.jsx`, `src/index.css`,
-  `src/api/` (auth, posts, admin), `src/component/` (Login, Register, PostList, PostForm, AdminChat).
-- `db/neon.js` — cliente de Neon. `db/test.js` — prueba de conexión.
-- `config/passport.js` — estrategia local + serialize/deserialize (con `"isAdmin"`).
-  `controllers/` (auth, post, admin — con SSE), `middleware/` (auth, validate), `routes/` (auth, post, admin)
-  — **Pasos 1-12 cerrados, verificado con curl y build.**
-- `README.md` — guía de configuración. Pasos 1-8 documentados (5 fusiona dev+prod; 8 = SSE) + Anexo de
-  diagramas de sesión. **Paso 8 (App React) pendiente de documentar.**
+  `src/api/` (auth, posts, admin, chat), `src/hooks/useChatStream.js`,
+  `src/component/` (Login, Register, PostList, PostForm, AdminChat) y `src/component/chat/`
+  (ChatPage, ConversationList, ChatWindow, MessageComposer, NewConversationModal).
+- `controllers/` (auth, post, admin, chat), `middleware/` (auth, validate, errorHandler,
+  rateLimiters, sameOrigin), `routes/` (auth, post, admin, chat).
+- `test/chat.test.js` — integración del chat. `vitest.config.js` — configuración de pruebas.
+- `README.md` — guía de configuración. Pasos 1-8 (recorrido histórico; 5 fusiona dev+prod y
+  8 = SSE) + **Paso 9 con el estado actual** (inicio rápido, `server.js`, sesiones en Postgres,
+  migraciones, chat privado, SSE con eventos nombrados, frontend, tests y gotchas) + Anexo de
+  sesión actualizado a `members.sid`/`connect-pg-simple`.
 
 ## ⚠️ IMPORTANTE al cambiar de PC
-- `.env` **no está en git** (gitignored). En el otro PC hay que crearlo de nuevo:
-  `DATABASE_URL='postgresql://...'` (string de conexión pooled de Neon).
-- Al clonar: `npm install` y `npm install react-router-dom` ya queda en package.json.
+- `.env` **no está en git** (gitignored). En el otro PC hay que crearlo de nuevo con
+  `DATABASE_URL`, `SESSION_SECRET` y `ADMIN_SECRET`.
+- Al clonar: `npm install` (incluye `pg`, `connect-pg-simple`, `helmet`, `express-rate-limit`,
+  Vitest y Supertest).
+- Tras configurar `.env`: `npm run db:migrate` para crear/actualizar las tablas del chat.
+- `npm run dev` / `npm start` ahora arrancan `server.js` (no `app.js`).
 - Para retomar: pegar este archivo en la nueva sesión de opencode para restaurar el contexto.
+---
+
+## Cierre de la fase `refactor/chat-v1`
+
+- La app abre directamente en el **chat**: se retiraron el muro de posts y el chat de admins
+  de la interfaz (los endpoints siguen en el servidor, sin uso).
+- Funcionalidad completa: salas públicas y privadas, mensajes directos, hilos, reacciones,
+  citas, menciones, fijados, búsqueda, enlaces, presencia y “está escribiendo…”.
+- Notificaciones con sonido y aviso del sistema, tres modos (sonido y aviso / solo sonido /
+  silenciar), contador de no leídos en el título y silencio por conversación.
+- Archivar y eliminar chats; borrar mensajes (propias o con permisos de moderación).
+- Confirmaciones propias con el tema de la app, sin `window.confirm`.
+- Identidad: logo «Círculo», favicon que sigue al tema e icono de app.
+- Migraciones `002`–`004`, `Cache-Control: no-store` en `/api`, tests de integración (23).

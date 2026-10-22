@@ -4,10 +4,12 @@
   "description": "aplciacion de publicacion de post en grupos privados implementando metodos de autenticacion",
   "main": "index.js",
   "scripts": {
-    "dev": "node app.js",
-    "build": "npm install && cd client && vite build && cd ..",
-    "start": "NODE_ENV=production node app.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "node server.js",
+    "build": "cd client && vite build",
+    "start": "NODE_ENV=production node server.js",
+    "db:migrate": "node db/migrate.js",
+    "test": "node db/migrate.js && vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [],
   "author": "",
@@ -22,15 +24,23 @@
     "@tailwindcss/vite": "^4.3.3",
     "@vitejs/plugin-react": "^6.1.0",
     "bcryptjs": "^3.0.3",
+    "connect-pg-simple": "^10.0.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.7.1",
     "express-session": "^1.19.0",
     "express-validator": "^7.3.2",
+    "helmet": "^8.3.0",
     "passport": "^0.7.0",
     "passport-local": "^1.0.0",
+    "pg": "^8.23.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.2",
     "vite": "^8.2.2"
+  },
+  "devDependencies": {
+    "supertest": "^7.3.1",
+    "vitest": "^5.0.5"
   }
 }
