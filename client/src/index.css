@@ -1,5 +1,113 @@
 @import "tailwindcss";
 
+:root,
+[data-theme="tinta"] {
+  --c-bg: #FFFFFF;
+  --c-sidebar: #F7F8FA;
+  --c-surface: #F7F8FA;
+  --c-raised: #EEF2F7;
+  --c-line: #E2E8F0;
+  --c-ink: #0F172A;
+  --c-ink-2: #334155;
+  --c-muted: #475569;
+  --c-accent: #1D4ED8;
+  --c-accent-ink: #FFFFFF;
+  --c-accent-soft: rgba(29, 78, 216, .08);
+  --c-online: #15803D;
+  --c-danger: #B42318;
+  --c-scrim: rgba(15, 23, 42, .45);
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Instrument Serif", Georgia, serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --radius-card: 8px;
+}
+
+[data-theme="grafito"] {
+  color-scheme: dark;
+  --c-bg: #17181B;
+  --c-sidebar: #1D1F23;
+  --c-surface: #1D1F23;
+  --c-raised: #24262B;
+  --c-line: #2C2F35;
+  --c-ink: #E9E6DF;
+  --c-ink-2: #CFCBC3;
+  --c-muted: #9A978F;
+  --c-accent: #D9A45C;
+  --c-accent-ink: #17181B;
+  --c-accent-soft: rgba(217, 164, 92, .14);
+  --c-online: #6F9A72;
+  --c-danger: #E5795F;
+  --c-scrim: rgba(0, 0, 0, .6);
+  --font-ui: "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --radius-card: 10px;
+}
+
+[data-theme="arcilla"] {
+  --c-bg: #F6F1E8;
+  --c-sidebar: #F6F1E8;
+  --c-surface: #FBF8F2;
+  --c-raised: #F6F1E8;
+  --c-line: #E3DACB;
+  --c-ink: #2A2521;
+  --c-ink-2: #4A4039;
+  --c-muted: #6B6158;
+  --c-accent: #A8542F;
+  --c-accent-ink: #FFFFFF;
+  --c-accent-soft: #F0E2D6;
+  --c-online: #5E7A4F;
+  --c-danger: #B3261E;
+  --c-scrim: rgba(42, 37, 33, .42);
+  --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Fraunces", Georgia, serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --radius-card: 12px;
+}
+
+@theme inline {
+  --color-bg: var(--c-bg);
+  --color-sidebar: var(--c-sidebar);
+  --color-surface: var(--c-surface);
+  --color-raised: var(--c-raised);
+  --color-line: var(--c-line);
+  --color-ink: var(--c-ink);
+  --color-ink-2: var(--c-ink-2);
+  --color-muted: var(--c-muted);
+  --color-accent: var(--c-accent);
+  --color-accent-ink: var(--c-accent-ink);
+  --color-accent-soft: var(--c-accent-soft);
+  --color-online: var(--c-online);
+  --color-danger: var(--c-danger);
+  --color-scrim: var(--c-scrim);
+}
+
+@utility font-ui {
+  font-family: var(--font-ui);
+}
+
+@utility font-display {
+  font-family: var(--font-display);
+}
+
+@utility rounded-card {
+  border-radius: var(--radius-card);
+}
+
+@layer base {
+  body {
+    @apply bg-bg text-ink font-ui;
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 2px;
+  }
+}
+
 .no-scrollbar {
   scrollbar-width: none;
 }

@@ -9,11 +9,13 @@ import {
 } from "../controllers/authController.js";
 import { requireAuth } from "../middleware/auth.js";
 import { handleValidation } from "../middleware/validate.js";
+import { authLimiter } from "../middleware/rateLimiters.js";
 
 const router = Router();
 
 router.post(
   "/register",
+  authLimiter,
   body("username")
     .trim()
     .isLength({ min: 3, max: 30 })
@@ -24,11 +26,12 @@ router.post(
   handleValidation,
   register,
 );
-router.post("/login", login);
+router.post("/login", authLimiter, login);
 router.post("/logout", logout);
 router.get("/me", current);
 router.post(
   "/admin",
+  authLimiter,
   requireAuth,
   body("secret").trim().notEmpty().withMessage("La clave es obligatoria"),
   handleValidation,

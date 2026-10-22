@@ -1,11 +1,18 @@
 # Members-Only — Guía de configuración
 
-App de posts en grupos privados.
+App de posts en grupos privados, con **chat privado 1:1 y en grupo** en tiempo real.
 
-- Backend: Node + Express
-- Frontend: React + Vite + Tailwind
-- Base de datos: Neon (PostgreSQL serverless)
+- Backend: Node + Express 5
+- Frontend: React 19 + Vite + Tailwind v4
+- Base de datos: PostgreSQL (Neon) — `@neondatabase/serverless` para auth/posts y `pg` para sesiones/chat
 - Auth: Passport + bcryptjs
+- Tiempo real: Server-Sent Events (SSE)
+- Tests: Vitest + Supertest
+
+> **Estado actual del proyecto: rama `refactor/chat-v1`.**
+> Los pasos 1-8 conservan el recorrido histórico de construcción (algunos fragmentos muestran
+> versiones incrementales). El estado final —`app.js` + `server.js`, sesiones en Postgres,
+> hardening, chat privado y tests— está en el **[Paso 9](#paso-9--chat-privado-hardening-y-tests)**.
 
 ## Contenido
 
@@ -17,16 +24,53 @@ App de posts en grupos privados.
 6. [Autenticación con Passport (sesiones)](#paso-6--autenticación-con-passport-sesiones)
 7. [Posts API + roles (admin)](#paso-7--posts-api--roles-admin)
 8. [SSE en el chat de admins](#paso-8--sse-en-el-chat-de-admins)
-9. [Anexo: flujo de sesión con Passport](#anexo--cómo-funciona-el-flujo-de-sesión-con-passport)
+9. [Chat privado, hardening y tests](#paso-9--chat-privado-hardening-y-tests)
+10. [Anexo: flujo de sesión con Passport](#anexo--cómo-funciona-el-flujo-de-sesión-con-passport)
+
+## Inicio rápido (estado actual)
+
+```bash
+npm install
+npm run db:migrate   # crea/actualiza las tablas (incluye el chat)
+npm run dev          # http://localhost:3000 (Express + Vite middleware)
+```
+
+`.env` (no está en git):
+
+```bash
+DATABASE_URL='postgresql://usuario:password@host/dbname?sslmode=require'
+SESSION_SECRET='cadena-larga-y-secreta'
+ADMIN_SECRET='clave-del-club-de-admins'
+```
+
+Otros comandos:
+
+```bash
+npm run build        # build de React en client/dist
+npm start            # producción: NODE_ENV=production node server.js (requiere build)
+npm test             # migraciones + tests de integración (Vitest + Supertest)
+npm run test:watch   # tests en modo watch
+```
 
 ## Paso 1 — Instalación de dependencias
 
+Dependencias del estado actual:
+
+```bash
+# Frontend
+npm install react react-dom react-router-dom vite @vitejs/plugin-react @tailwindcss/vite
+
+# Backend
+npm install express express-session express-validator passport passport-local
+npm install bcryptjs dotenv @neondatabase/serverless
+npm install pg connect-pg-simple helmet express-rate-limit
+
+# Tests
+npm install -D vitest supertest
 ```
-npm install react react-dom vite @vitejs/plugin-react @tailwindcss/vite
-npm install @neondatabase/serverless bcryptjs dotenv express express-session
-npm install express-validator passport passport-local
-npm install react-router-dom
-```
+
+> Las dependencias de la fase inicial (`browser-sync`, `nodeom`, `npm-run-all`) se eliminaron
+> para dejar `npm audit` en 0 vulnerabilidades.
 
 ## Paso 2 — Scaffolding del proyecto
 
@@ -35,7 +79,8 @@ npm install react-router-dom
 Crear las carpetas de manera automaticamente con el siguiente comando en el bash :
 
 ```bash
-mkdir -p db client/src config controllers routes
+mkdir -p db client/src config controllers middleware routes test
+mkdir -p db/migrations client/src/api client/src/component/chat client/src/hooks
 ```
 
 Estructura esperada tras ejecutar el comando:
@@ -43,15 +88,30 @@ Estructura esperada tras ejecutar el comando:
 ```
                                 MODEL-VIEW-CONTROLLER (MVC)
 Members-Only/
-├── package.json 
-├── package-lock.json        
-├── .gitignore          
-├── db/           → configuracion Neon DB           (MODELL)
-├── client/       → app React + Vite + Tailwind     (VIEW)
-│   └── src/      → (main.jsx, App.jsx, index.css)    ....
-├── config/       → (configuracion de passport js)  (CONTROLLER)
-├── controllers/  → (controladores de rutas)          ....
-└── routes/       → (enrutadores para cada endpoint)  ....
+├── package.json
+├── package-lock.json
+├── .gitignore
+├── .env                  → credenciales (gitignored)
+├── .env.example          → plantilla de variables
+├── app.js                → app Express (testeable, sin listen)
+├── server.js             → listen + cierre ordenado
+├── config/               → env.js, passport.js
+├── db/                   → neon.js, pg.js, migrate.js, migrations/, schema.js
+├── controllers/          → auth, post, admin, chat
+├── middleware/           → auth, validate, errorHandler, rateLimiters, sameOrigin
+├── routes/               → auth, post, admin, chat
+├── test/                 → tests de integración
+├── vitest.config.js
+└── client/               → app React + Vite + Tailwind
+    ├── index.html
+    ├── vite.config.js
+    └── src/
+        ├── main.jsx, App.jsx, index.css
+        ├── api/          → auth.js, posts.js, admin.js, chat.js
+        ├── hooks/        → useChatStream.js
+        └── component/    → Login, Register, PostList, PostForm, AdminChat
+            └── chat/     → ChatPage, ConversationList, ChatWindow,
+                            MessageComposer, NewConversationModal
 ```
 
 ## Paso 3 — Configuración base (Vite + Tailwind + React)
@@ -174,7 +234,11 @@ Un solo servidor en el puerto 3000. Express detecta el entorno con `NODE_ENV`:
 - **Prod** (`NODE_ENV=production`): sirve el build estático `client/dist` con **fallback SPA**
   (`/*splat`) para que las rutas de `react-router-dom` funcionen.
 
-### `app.js` (final, con ambas ramas)
+> ⚠️ **Nota de estado:** este paso muestra la versión **base** del servidor único. El
+> `app.js` actual (sesión persistente, Helmet, rate limit, same-origin, rutas de chat y
+> separación `app.js`/`server.js`) está en el **[Paso 9](#paso-9--chat-privado-hardening-y-tests)**.
+
+### `app.js` (versión base, con ambas ramas)
 
 ```js
 import "dotenv/config";
@@ -210,51 +274,65 @@ app.listen(PORT, () => {
 });
 ```
 
-### Probar en dev (HMR)
+### Probar en dev (HMR) — estado actual
 
 ```bash
-node app.js
+npm run dev          # ejecuta node server.js
 ```
 Abrir http://localhost:3000 → React se renderiza con estilos de Tailwind. Editar
-`client/src/App.jsx` y el navegador se actualiza sin recargar.
+`client/src/App.jsx` y el navegador se actualiza sin recargar. Los cambios de **backend**
+requieren reiniciar el proceso (no hay nodemon).
 
 ### Probar en prod
 
 ```bash
-cd client && npx vite build && cd ..
-NODE_ENV=production node app.js
+npm run build        # cd client && vite build
+npm start            # NODE_ENV=production node server.js
 ```
 Abrir http://localhost:3000 → se sirve el build de React. El fallback `/*splat` responde con
-`index.html` para rutas como `/login`.
+`index.html` para rutas como `/login` o `/chat`.
+
+> En producción la cookie de sesión es `secure` (solo HTTPS). Si pruebas `npm start` en
+> `http://localhost`, el navegador no guardará la cookie y el login no persistirá.
+> Para desarrollo usa `npm run dev`; para producción real, sirve la app detrás de HTTPS.
 
 ### Notas
 
-- **No** ejecutar `npx vite` por separado junto a `node app.js`: chocan en el puerto del
+- **No** ejecutar `npx vite` por separado junto a `node server.js`: chocan en el puerto del
   WebSocket de HMR (24678). Con esta arquitectura Vite vive dentro de Express.
 - En **Express 5** el comodín de ruta es `/*splat` (con `*` a secas rompe).
 
-Estructura del proyecto:
+Estructura actual del proyecto:
 
-```
+```text
 Members-Only/
-├── app.js        → servidor Express (dev + prod)
-├── .env          → credenciales (gitignored)
-├── .env.example  → plantilla de variables
+├── app.js          → app Express (sin listen) + Vite middleware
+├── server.js       → listen + cierre ordenado
+├── .env            → credenciales (gitignored)
+├── .env.example    → plantilla de variables
 ├── db/
-│   ├── neon.js   → cliente de la DB
-│   ├── schema.js → crea las tablas (1 sola vez)
-│   └── test.js   → prueba de conexión
-├── client/       → app React + Vite + Tailwind
+│   ├── neon.js     → cliente Neon (auth/posts/admin)
+│   ├── pg.js       → Pool de pg (sesiones/chat) + parser BIGINT
+│   ├── migrate.js  → runner de migraciones
+│   ├── migrations/ → 001_chat.sql
+│   ├── schema.js   → tablas base (script histórico)
+│   └── test.js     → prueba de conexión
+├── client/
 │   ├── index.html
 │   ├── vite.config.js
 │   └── src/
 │       ├── main.jsx, App.jsx, index.css
-│       ├── api/       → auth.js, posts.js (fetch helpers)
-│       └── component/ → Login, Register, PostList, PostForm
-├── config/       → passport.js
-├── controllers/  → authController, postController, adminController
-├── middleware/   → auth.js (requireAuth/requireAdmin), validate.js
-└── routes/       → authRoutes, postRoutes, adminRoutes
+│       ├── api/        → auth.js, posts.js, admin.js, chat.js
+│       ├── hooks/      → useChatStream.js
+│       └── component/  → Login, Register, PostList, PostForm, AdminChat
+│           └── chat/   → ChatPage, ConversationList, ChatWindow,
+│                         MessageComposer, NewConversationModal
+├── config/         → env.js, passport.js
+├── controllers/    → authController, postController, adminController, chatController
+├── middleware/     → auth.js, validate.js, errorHandler.js, rateLimiters.js, sameOrigin.js
+├── routes/         → authRoutes, postRoutes, adminRoutes, chatRoutes
+├── test/           → chat.test.js
+└── vitest.config.js
 ```
 
 ## Paso 6 — Autenticación con Passport (sesiones)
@@ -435,6 +513,9 @@ app.use("/api/auth", authRoutes);
 
 > **El orden importa**: sesión → passport → rutas. Las rutas `/api/*` van **antes** del
 > bloque Vite/static para no caer en el fallback SPA.
+>
+> La configuración actual de la sesión (store en Postgres con `connect-pg-simple`, cookie
+> `members.sid`, `trust proxy` y Helmet) está en el **[Paso 9](#paso-9--chat-privado-hardening-y-tests)**.
 
 ### 6. Variables de entorno
 
@@ -451,8 +532,9 @@ SESSION_SECRET='cambia-esto'
 ### 7. Verificación
 
 ```bash
-node db/schema.js          # tablas users + posts
-node app.js                # servidor en dev
+node db/schema.js          # tablas base (script histórico)
+npm run db:migrate         # migraciones actuales (incluye chat)
+npm run dev                # servidor en dev (server.js)
 ```
 
 ```bash
@@ -629,13 +711,17 @@ app.use("/api/admin", adminRoutes);
 ### 8. Verificación
 
 ```bash
-node db/schema.js   # admin_messages, posts, users
+node db/schema.js   # admin_messages, posts, users (script histórico)
 # feed anónimo → posts sin autor · feed logueado → con autor
 # POST /api/posts sin sesión → 401 · título vacío → 400
 # POST /api/auth/admin clave mala → 403 · buena → "isAdmin": true
 # chat /api/admin/messages: user → 403 · admin → 200
 # DELETE /api/admin/users/:id → borra usuario y sus posts (cascade)
 ```
+
+> El chat de admins (`/api/admin/messages`) convive con el chat privado nuevo
+> (`/api/chat/*`). El primero sigue siendo exclusivo de admins; el segundo es para cualquier
+> usuario logueado.
 
 ---
 
@@ -964,6 +1050,462 @@ AdminChat vuelve a cargar:
 
 ---
 
+## Paso 9 — Chat privado, hardening y tests
+
+Esta fase (`refactor/chat-v1`) convierte el backend en una base más robusta y añade chat
+privado **1:1 y en grupo** para cualquier usuario logueado.
+
+### 1. Dependencias y scripts
+
+```bash
+npm install pg connect-pg-simple helmet express-rate-limit
+npm install -D vitest supertest
+```
+
+`package.json` (scripts actuales):
+
+```json
+{
+  "scripts": {
+    "dev": "node server.js",
+    "build": "cd client && vite build",
+    "start": "NODE_ENV=production node server.js",
+    "db:migrate": "node db/migrate.js",
+    "test": "node db/migrate.js && vitest run",
+    "test:watch": "vitest"
+  }
+}
+```
+
+`.env` (y `.env.example` sin valores):
+
+```bash
+DATABASE_URL='postgresql://usuario:password@host/dbname?sslmode=require'
+SESSION_SECRET='cambia-esto-por-una-cadena-larga-y-secreta'
+ADMIN_SECRET='Cambia esto'
+```
+
+### 2. `app.js` + `server.js` (app testeable, sin `listen`)
+
+`app.js` exporta la app para poder testearla con Supertest; `server.js` es el único que
+escucha y cierra ordenadamente:
+
+```js
+// server.js
+import app from "./app.js";
+import env from "./config/env.js";
+
+const server = app.listen(env.port, () => {
+  console.log(`Servidor en http://localhost:${env.port}`);
+});
+
+let closing = false;
+
+function shutdown(signal) {
+  if (closing) return;
+  closing = true;
+  console.log(`Recibido ${signal}, cerrando servidor...`);
+
+  server.close(() => {
+    process.exit(0);
+  });
+
+  setTimeout(() => process.exit(1), 10000).unref();
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+```
+
+`app.js` actual (orden importante: JSON → sesión → passport → same-origin → rutas API →
+static/Vite → error handler):
+
+```js
+import path from "path";
+import express from "express";
+import session from "express-session";
+import helmet from "helmet";
+import connectPgSimple from "connect-pg-simple";
+import env from "./config/env.js";
+import pool from "./db/pg.js";
+import passport from "./config/passport.js";
+import authRoutes from "./routes/authRoutes.js";
+import postRoutes from "./routes/postRoutes.js";
+import adminRoutes from "./routes/adminRoutes.js";
+import chatRoutes from "./routes/chatRoutes.js";
+import { sameOrigin } from "./middleware/sameOrigin.js";
+import { notFound, errorHandler } from "./middleware/errorHandler.js";
+
+const app = express();
+
+if (env.isProd) {
+  app.set("trust proxy", 1);
+}
+
+app.use(
+  helmet({
+    contentSecurityPolicy: env.isProd ? undefined : false,
+  }),
+);
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+const PgStore = connectPgSimple(session);
+
+const sessionStore = env.isTest
+  ? new session.MemoryStore()
+  : new PgStore({ pool, createTableIfMissing: true });
+
+app.use(
+  session({
+    name: "members.sid",
+    secret: env.sessionSecret,
+    store: sessionStore,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: env.isProd,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    },
+  }),
+);
+app.use(passport.initialize());
+app.use(passport.session());
+
+app.use("/api", sameOrigin);
+
+app.get("/api/health", (req, res) => res.json({ ok: true }));
+
+app.use("/api/auth", authRoutes);
+app.use("/api/posts", postRoutes);
+app.use("/api/admin", adminRoutes);
+app.use("/api/chat", chatRoutes);
+
+app.use("/api", notFound);
+
+if (env.isProd) {
+  const distPath = path.join(import.meta.dirname, "client/dist");
+  app.use(express.static(distPath));
+  app.get("/*splat", (req, res) => {
+    res.sendFile(path.join(distPath, "index.html"));
+  });
+} else if (!env.isTest) {
+  const { createServer: createViteServer } = await import("vite");
+  const vite = await createViteServer({
+    root: path.join(import.meta.dirname, "client"),
+    server: { middlewareMode: true },
+    appType: "spa",
+  });
+  app.use(vite.middlewares);
+}
+
+app.use(errorHandler);
+
+export default app;
+```
+
+`config/env.js` valida las variables obligatorias al arrancar (falla rápido si faltan):
+
+```js
+import "dotenv/config";
+
+const required = ["DATABASE_URL", "SESSION_SECRET"];
+const missing = required.filter((name) => !process.env[name]);
+
+if (missing.length > 0) {
+  throw new Error(
+    `Faltan variables de entorno obligatorias: ${missing.join(", ")}`,
+  );
+}
+
+const isProd = process.env.NODE_ENV === "production";
+const isTest = process.env.NODE_ENV === "test";
+
+export const env = {
+  databaseUrl: process.env.DATABASE_URL,
+  sessionSecret: process.env.SESSION_SECRET,
+  adminSecret: process.env.ADMIN_SECRET,
+  port: Number(process.env.PORT) || 3000,
+  isProd,
+  isTest,
+};
+
+export default env;
+```
+
+> **Sesiones:** en dev/prod se guardan en Postgres con `connect-pg-simple` (cookie
+> `members.sid`, 7 días). En tests se usa `MemoryStore` para no depender de la tabla de
+> sesiones. Esto reemplaza al `MemoryStore` histórico del Anexo.
+
+### 3. `db/pg.js`, migraciones y `db/migrations/001_chat.sql`
+
+`db/pg.js` crea un `Pool` de `pg` (usado por sesiones y chat) y convierte `BIGINT` a número,
+porque `pg` devuelve `BIGSERIAL` como string:
+
+```js
+import pg from "pg";
+import env from "../config/env.js";
+
+const { Pool } = pg;
+
+pg.types.setTypeParser(20, (value) => Number(value));
+
+const pool = new Pool({
+  connectionString: env.databaseUrl,
+  max: 5,
+});
+
+export default pool;
+```
+
+`db/migrate.js` aplica en orden los `.sql` de `db/migrations/`, registra cada uno en
+`schema_migrations` y envuelve cada migración en una transacción (`BEGIN`/`COMMIT`/`ROLLBACK`).
+Ejecutar con `npm run db:migrate` (es idempotente: si ya está aplicada, la salta).
+
+`db/migrations/001_chat.sql`:
+
+```sql
+CREATE TABLE IF NOT EXISTS conversations (
+  id SERIAL PRIMARY KEY,
+  type TEXT NOT NULL CHECK (type IN ('direct', 'group')),
+  title TEXT,
+  dm_key TEXT UNIQUE,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT conversations_shape CHECK (
+    (type = 'direct' AND dm_key IS NOT NULL AND title IS NULL) OR
+    (type = 'group' AND dm_key IS NULL AND title IS NOT NULL)
+  )
+);
+
+CREATE TABLE IF NOT EXISTS conversation_members (
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('owner', 'admin', 'member')),
+  joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_read_message_id BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (conversation_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+  id BIGSERIAL PRIMARY KEY,
+  conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  body TEXT NOT NULL CHECK (char_length(btrim(body)) > 0 AND char_length(body) <= 4000),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  edited_at TIMESTAMPTZ,
+  deleted_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_conversation_id_id ON messages (conversation_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_conversation_members_user_id ON conversation_members (user_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations (updated_at DESC);
+```
+
+Decisiones del esquema:
+
+- **DM único**: `dm_key` guarda los dos ids ordenados (`"3:7"`), con `UNIQUE`. Si el DM ya
+  existe, se reutiliza en vez de crear otro.
+- **Grupo**: `title` obligatorio y `dm_key` nulo (lo exige el CHECK).
+- **Miembros y roles**: `conversation_members` es la tabla puente; el creador queda `owner`.
+- **No leídos**: `last_read_message_id` por miembro; se compara con el último mensaje.
+- **Borrado lógico**: `messages.deleted_at` (las consultas filtran `IS NULL`).
+
+### 4. Hardening y middlewares
+
+- `helmet` — cabeceras de seguridad (CSP activa en prod).
+- `express-rate-limit` — `authLimiter` (100 req/15 min en auth/admin) y
+  `chatWriteLimiter` (120 req/min en escrituras de chat); ambos se saltan en tests.
+- `sameOrigin` — para `POST`/`PUT`/`PATCH`/`DELETE` con cabecera `Origin`, exige que coincida
+  con el host de la petición (mitiga CSRF). Las peticiones sin `Origin` (curl, tests) pasan.
+- `errorHandler` — centraliza errores: 500 genérico en prod, mensaje en 4xx; no filtra stacks.
+- `notFound` — cualquier `/api/*` desconocida responde 404 JSON (no cae en el SPA).
+- `GET /api/health` — healthcheck `{ ok: true }`.
+
+### 5. API de chat
+
+Base: `/api/chat`. Todo requiere sesión (`requireAuth`).
+
+| Método | Ruta | Body / query | Respuesta |
+|---|---|---|---|
+| GET | `/users?q=` | `q` mín. 2 caracteres | `[{ id, username }]` |
+| GET | `/conversations` | — | Lista de conversaciones |
+| GET | `/conversations/:id` | — | Una conversación |
+| POST | `/conversations` | `{ type:"direct", targetUserId }` o `{ type:"group", title, memberIds }` | 201 (200 si el DM ya existía) |
+| GET | `/conversations/:id/messages` | `limit` (máx. 100), `before` | `{ messages, nextCursor }` |
+| POST | `/conversations/:id/messages` | `{ body }` (máx. 4000) | 201 + mensaje |
+| POST | `/conversations/:id/read` | `{ messageId }` | `{ ok, lastReadMessageId }` |
+| GET | `/stream` | — | SSE |
+
+Forma de una conversación:
+
+```json
+{
+  "id": 1,
+  "type": "direct",
+  "title": "luis",
+  "created_at": "...",
+  "updated_at": "...",
+  "last_read_message_id": 12,
+  "unread_count": 0,
+  "last_message": {
+    "id": 12,
+    "body": "hola",
+    "created_at": "...",
+    "sender_id": 7,
+    "username": "luis"
+  },
+  "members": [{ "id": 7, "username": "luis", "role": "owner" }]
+}
+```
+
+- En un **DM**, el `title` se calcula en el backend con el username del otro miembro.
+- `unread_count` cuenta mensajes con `id > last_read_message_id` cuyo `sender_id` no es el
+  usuario actual.
+- `GET /messages` devuelve los últimos `limit` en orden ascendente. Si la página vino
+  completa, `nextCursor` es el id del mensaje más viejo (para pedir `?before=<id>`); si vino
+  incompleta, es `null`.
+- Crear un DM es **idempotente** por `dm_key`; crear un grupo valida que todos los
+  `memberIds` existan y añade al creador como `owner`.
+
+Implementación principal: `controllers/chatController.js` y `routes/chatRoutes.js`.
+Las operaciones que tocan varias tablas (crear conversación + miembros) usan una transacción
+con `pool.connect()`; el envío de mensajes usa un `INSERT ... SELECT ... WHERE EXISTS`
+para insertar solo si el usuario es miembro.
+
+### 6. SSE del chat
+
+A diferencia del chat de admins (Paso 8), aquí los eventos van **con nombre** y se filtran
+por miembro de la conversación:
+
+```
+GET /api/chat/stream
+  → event: ready                data: { userId }
+  → event: conversation.created data: { conversationId }
+  → event: message.created      data: { conversationId, message }
+  → event: read.updated         data: { conversationId, lastReadMessageId }
+```
+
+- `streamClients` es un `Set` de `{ res, userId }`; al desconectar se limpia y se corta el
+  heartbeat (30 s).
+- `message.created` y `conversation.created` se envían a **todos los miembros**.
+- `read.updated` se envía **solo al mismo usuario** (sus otras pestañas), porque representa
+  el avance de *su* lectura.
+- El hook `client/src/hooks/useChatStream.js` usa `addEventListener` para los eventos con
+  nombre (no `onmessage`) y `withCredentials: true` para mandar la cookie.
+
+```js
+const source = new EventSource("/api/chat/stream", { withCredentials: true });
+
+source.addEventListener("message.created", (event) => {
+  const { conversationId, message } = JSON.parse(event.data);
+  // append idempotente: prev.some(m => m.id === message.id) ? prev : [...prev, message]
+});
+source.addEventListener("conversation.created", () => reloadConversations());
+source.addEventListener("read.updated", ({ data }) => {
+  const { conversationId, lastReadMessageId } = JSON.parse(data);
+  // actualizar el marcador local
+});
+
+return () => source.close();
+```
+
+### 7. Frontend de chat
+
+Rutas nuevas en `client/src/App.jsx` (solo logueados; si no hay sesión → `/login`):
+
+- `/chat` → lista de conversaciones + panel vacío.
+- `/chat/:conversationId` → conversación activa (en móvil se muestra sola; en desktop
+  conviven lista y ventana).
+
+Componentes:
+
+- `ChatPage.jsx` — estado global del chat: lista, mensajes, cursor, no leídos, SSE y navegación.
+- `ConversationList.jsx` — búsqueda visual, último mensaje, hora, badge de no leídos.
+- `ChatWindow.jsx` — cabecera, historial, scroll al último mensaje, botón de mensajes viejos.
+- `MessageComposer.jsx` — textarea (Enter envía, Shift+Enter salto de línea), límite 4000.
+- `NewConversationModal.jsx` — pestañas DM/Grupo, búsqueda de usuarios con debounce (300 ms),
+  selección múltiple y creación.
+- `client/src/api/chat.js` — helpers `fetch` con manejo uniforme de errores.
+
+Detalles de estado:
+
+- Al abrir una conversación se cargan los últimos 30 mensajes y se marca leída si el último
+  mensaje supera `last_read_message_id`.
+- Los eventos SSE se aplican de forma **idempotente** (por `id`) para evitar duplicados entre
+  la respuesta del POST y el push.
+- La lista se reordena por actividad (`last_message.created_at` o `updated_at`).
+
+### 8. Tests
+
+`test/chat.test.js` usa Vitest + Supertest contra la app exportada (`NODE_ENV=test` activa
+MemoryStore y desactiva los rate limiters). Cubre:
+
+1. registro de dos usuarios y búsqueda;
+2. creación de DM y reutilización por `dm_key`;
+3. envío de mensaje y cálculo de `unread_count`;
+4. historial y cursor;
+5. marcar leído (baja a 0 el no leído);
+6. grupo con miembros y no leídos;
+7. validaciones (DM consigo mismo, mensaje vacío, lectura inválida);
+8. stream SSE autenticado (`text/event-stream` + evento `ready`).
+
+Los tests usan usuarios aleatorios (`test_a_<sufijo>`) y los eliminan en `afterAll` (el
+`ON DELETE CASCADE` limpia conversaciones y mensajes). **Usan la DB real configurada en
+`.env`**, así que no los apuntes a producción.
+
+`vitest.config.js`:
+
+```js
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    fileParallelism: false,
+    testTimeout: 30000,
+    hookTimeout: 30000,
+  },
+});
+```
+
+### 9. Verificación
+
+```bash
+npm run db:migrate
+npm test                 # 8/8 en verde
+npm run build            # build de React
+npm run dev              # http://localhost:3000
+```
+
+Prueba manual en el navegador:
+
+1. Registra dos usuarios (usa una ventana normal y otra de incógnito).
+2. Con el usuario A: **Chats → Nuevo → Mensaje directo → busca a B**.
+3. Envía un mensaje; en la ventana de B debe aparecer sin recargar (SSE) y con badge de no leído.
+4. Abre la conversación en B → el badge baja a 0.
+5. Crea un grupo con ambos y repite el envío.
+6. Recarga la página: la sesión persiste (cookie `members.sid` + store en Postgres).
+
+### 10. Gotchas de esta fase
+
+- `pg` devuelve `BIGINT` como **string**; sin `setTypeParser(20, Number)` las comparaciones
+  `id <= otroId` fallan (`"10" < "9"`). Está resuelto en `db/pg.js`.
+- El driver HTTP de Neon (`sql\`...\``) no permite transacciones multi-query; por eso el chat
+  usa el `Pool` de `pg`. Auth/posts/admin siguen usando `@neondatabase/serverless`.
+- Los eventos SSE con nombre **no** llegan a `source.onmessage`; hay que registrarlos con
+  `source.addEventListener("nombre", ...)`.
+- En producción `secure: true` exige HTTPS; en `http://localhost` la cookie no se guarda.
+- `sameOrigin` bloquea escrituras cross-origin con `Origin` distinto; si usas un dominio o
+  proxy, revisa `trust proxy` y el host recibido.
+- El servidor de desarrollo no recarga cambios de backend; reinicia `npm run dev`.
+- El chat de admins histórico (`admin_messages`, `/api/admin/messages`) sigue activo y
+  separado del chat privado nuevo.
+
+---
+
 ## Anexo — Cómo funciona el flujo de sesión con Passport
 
 Referencia rápida para reproducir el patrón en futuros proyectos.
@@ -1009,8 +1551,8 @@ authController.js (callback de authenticate)
 Passport ──► serializeUser(user)  → done(null, user.id)   ← guarda SOLO el id
               │
               ▼
-express-session ──► guarda {passport: {user: <id>}} en el MemoryStore
-                    y envía la cookie connect.sid al navegador
+express-session ──► guarda {passport: {user: <id>}} en Postgres
+                    (connect-pg-simple) y envía la cookie members.sid
               │
               ▼
 authController ──► res.json(user)   → HTTP 200
@@ -1018,32 +1560,33 @@ authController ──► res.json(user)   → HTTP 200
 
 ### Diagrama 2 — ¿Dónde vive la sesión?
 
-`express-session` por defecto usa **MemoryStore**: un objeto en memoria del proceso Node.
-El navegador solo guarda el **ID** de la sesión en la cookie `connect.sid`.
+`express-session` usa **`connect-pg-simple`**: la sesión se guarda en la tabla `session` de
+Postgres. El navegador solo guarda el **ID** de la sesión en la cookie `members.sid`.
+En tests (`NODE_ENV=test`) se usa `MemoryStore` para no depender de esa tabla.
 
 ```
-   Servidor (memoria del proceso Node)              Navegador
+   Postgres (tabla session)                         Navegador
 ┌──────────────────────────────────────┐        ┌─────────────────────┐
-│  MemoryStore (express-session)       │        │  Cookies            │
-│  ┌────────────────────────────────┐  │        │  connect.sid=abc123 │
+│  connect-pg-simple                   │        │  Cookies            │
+│  ┌────────────────────────────────┐  │        │  members.sid=abc123 │
 │  │  "abc123..." → {              │  │◄───────│                     │
 │  │    passport: { user: 7 }      │  │        │  solo viaja el ID   │
 │  │  }                            │  │        └─────────────────────┘
 │  └────────────────────────────────┘  │
 └──────────────────────────────────────┘
-     los datos de la sesión viven aquí
+     los datos de la sesión viven aquí (persisten al reiniciar)
 ```
 
-> ⚠️ MemoryStore se borra al reiniciar el servidor (las sesiones se pierden). Para prod se
-> usa un store persistente (ej. `connect-pg-simple`, que guarda sesiones en Postgres).
+> La cookie es `httpOnly`, `sameSite=lax`, dura 7 días y en producción es `secure` (HTTPS).
+> `SESSION_SECRET` firma la cookie; si cambia, las sesiones existentes dejan de ser válidas.
 
 ### Diagrama 3 — Recuperación de la sesión (peticiones siguientes)
 
 ```
 NAVEGADOR
-   │  GET /api/auth/me   (la cookie connect.sid viaja automáticamente)
+   │  GET /api/auth/me   (la cookie members.sid viaja automáticamente)
    ▼
-express-session ──► lee la cookie → busca "abc123" en MemoryStore
+express-session ──► lee la cookie → busca "abc123" en la tabla session (Postgres)
                     → req.session = {passport: {user: 7}}
    ▼
 passport.session() ──► lee req.session.passport.user (= 7)

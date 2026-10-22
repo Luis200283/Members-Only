@@ -1,9 +1,46 @@
 <!doctype html>
-<html lang="en">
+<html lang="es">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Members Only</title>
+    <title>Círculo · Chat del club</title>
+    <meta
+      name="description"
+      content="Chat privado del club: salas, hilos, reacciones, avisos y mensajes directos."
+    />
+    <meta name="theme-color" content="#f7f8fa" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Inter:wght@400;500;600&family=Instrument+Sans:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+    <script>
+      (function () {
+        var themes = ["tinta", "grafito", "arcilla"];
+        var icons = {
+          tinta: "/favicon.svg",
+          grafito: "/favicon-grafito.svg",
+          arcilla: "/favicon-arcilla.svg",
+        };
+        var colors = {
+          tinta: "#f7f8fa",
+          grafito: "#1d1f23",
+          arcilla: "#f6f1e8",
+        };
+        var theme = "tinta";
+        try {
+          var saved = localStorage.getItem("circulo-theme");
+          if (themes.indexOf(saved) !== -1) theme = saved;
+        } catch (e) {}
+        document.documentElement.dataset.theme = theme;
+
+        var icon = document.querySelector('link[rel="icon"]');
+        if (icon) icon.setAttribute("href", icons[theme]);
+
+        var themeColor = document.querySelector('meta[name="theme-color"]');
+        if (themeColor) themeColor.setAttribute("content", colors[theme]);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
